@@ -1,0 +1,478 @@
+# AirGradient ONE - Board v9
+# https://www.airgradient.com/open-airgradient/instructions/overview/
+
+# Needs ESPHome 2023.7.0 or later
+
+substitutions:
+  devicename: "airgradient-one"
+  upper_devicename: "AirGradient One"
+  ag_esphome_config_version: 0.2.1
+
+esphome:
+  name: "${devicename}"
+  friendly_name: "${upper_devicename}"
+  name_add_mac_suffix: false  # Set to false if you don't want part of the MAC address in the name
+
+
+esp32:
+  board: esp32-c3-devkitm-1
+
+# Disable logging
+# https://esphome.io/components/logger.html
+logger:
+  baud_rate: 0  # Must disable serial logging as ESP32-C3 only has 2 hardware UART and both are in use
+  logs:
+    component: ERROR  # Hiding warning messages about component taking a long time https://github.com/esphome/issues/issues/4717
+
+# Enable Home Assistant API
+api:
+
+ota:
+
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+      hidden: !secret hidden_ssid
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+
+# The captive portal is a fallback mechanism for when connecting to the configured WiFi fails.
+# https://esphome.io/components/captive_portal.html
+captive_portal:
+
+# web_server:  # Please note that enabling this component will take up a lot of memory and may decrease stability, especially on ESP8266.
+# Creates a simple web server on the node that can be accessed through any browser
+# https://esphome.io/components/web_server.html
+web_server:
+  port: 80
+  include_internal: true
+
+http_request:
+  # Used to support POST request to send data to AirGradient
+  # https://esphome.io/components/http_request.html
+
+switch:
+  # Create a switch for safe_mode in order to flash the device
+  # Solution from this thread:
+  # https://community.home-assistant.io/t/esphome-flashing-over-wifi-does-not-work/357352/1
+  - platform: safe_mode
+    name: "Flash Mode (Safe Mode)"
+    icon: "mdi:cellphone-arrow-down"
+  - platform: template
+    name: "Display Temperature in °F"
+    icon: "mdi:thermometer"
+    id: display_in_f
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: True
+  
+  - platform: template
+    name: "Disable OLED"
+    icon: "mdi:television"
+    id: disable_oled
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: True
+    turn_on_action:
+      - display.page.show: blank
+    turn_off_action:
+      - display.page.show: combo
+
+uart:
+  # https://esphome.io/components/uart.html#uart
+  - rx_pin: GPIO0  # Pin 12
+    tx_pin: GPIO1  # Pin 13
+    baud_rate: 9600
+    id: senseair_s8_uart
+
+  - rx_pin: GPIO20  # Pin 30 or RX
+    tx_pin: GPIO21  # Pin 31 or TX
+    baud_rate: 9600
+    id: pms5003_uart
+
+i2c:
+  # https://esphome.io/components/i2c.html
+  sda: GPIO7
+  scl: GPIO6
+  frequency: 400kHz  # 400kHz eliminates warnings about components taking a long time other than SGP40 component: https://github.com/esphome/issues/issues/4717
+
+sensor:
+    # Default interval of updating every second, but using an average over the last 30 seconds/readings
+  - platform: pmsx003
+    # PMS5003 https://esphome.io/components/sensor/pmsx003.html
+    type: PMSX003
+    uart_id: pms5003_uart
+    pm_1_0:
+      id: pm_1_0
+      name: "Particulate Matter <1.0µm Concentration"
+      filters:
+        - sliding_window_moving_average:
+            window_size: 30
+            send_every: 30
+    pm_2_5:
+      id: pm_2_5
+      name: "Particulate Matter <2.5µm Concentration"
+      filters:
+        - sliding_window_moving_average:
+            window_size: 30
+            send_every: 30
+    pm_10_0:
+      id: pm_10_0
+      name: "Particulate Matter <10.0µm Concentration"
+      filters:
+        - sliding_window_moving_average:
+            window_size: 30
+            send_every: 30
+    pm_0_3um:
+      id: pm_0_3um
+      icon: mdi:blur
+      name: "Particulate Matter >0.3µm Count"
+      filters:
+        - sliding_window_moving_average:
+            window_size: 30
+            send_every: 30
+    pm_0_5um:
+      id: pm_0_5um
+      icon: mdi:blur
+      name: "Particulate Matter >0.5µm Count"
+      filters:
+        - sliding_window_moving_average:
+            window_size: 30
+            send_every: 30
+    pm_1_0um:
+      id: pm_1_0um
+      icon: mdi:blur
+      name: "Particulate Matter >1.0µm Count"
+      filters:
+        - sliding_window_moving_average:
+            window_size: 30
+            send_every: 30
+    pm_2_5um:
+      id: pm_2_5um
+      icon: mdi:blur
+      name: "Particulate Matter >2.5µm Count"
+      filters:
+        - sliding_window_moving_average:
+            window_size: 30
+            send_every: 30
+
+  # Depends on another sensor providing an ID of pm_2_5 such as a pms5003
+  - platform: template
+    name: "PM 2.5 AQI"
+    id: pm_2_5_aqi
+    update_interval: 1 min
+    unit_of_measurement: "AQI"
+    icon: "mdi:air-filter"
+    accuracy_decimals: 0
+    filters:
+      - skip_initial: 10  # Need valid data from PM 2.5 sensor before able to calculate
+    lambda: |-
+      // https://en.wikipedia.org/wiki/Air_quality_index#Computing_the_AQI
+      // Borrowed from https://github.com/kylemanna/sniffer/blob/master/esphome/sniffer_common.yaml
+      if (id(pm_2_5).state <= 12.0) {
+      // good
+      return((50.0 - 0.0) / (12.0 - 0.0) * (id(pm_2_5).state - 0.0) + 0.0);
+      } else if (id(pm_2_5).state <= 35.4) {
+      // moderate
+      return((100.0 - 51.0) / (35.4 - 12.1) * (id(pm_2_5).state - 12.1) + 51.0);
+      } else if (id(pm_2_5).state <= 55.4) {
+      // usg
+      return((150.0 - 101.0) / (55.4 - 35.5) * (id(pm_2_5).state - 35.5) + 101.0);
+      } else if (id(pm_2_5).state <= 150.4) {
+      // unhealthy
+      return((200.0 - 151.0) / (150.4 - 55.5) * (id(pm_2_5).state - 55.5) + 151.0);
+      } else if (id(pm_2_5).state <= 250.4) {
+      // very unhealthy
+      return((300.0 - 201.0) / (250.4 - 150.5) * (id(pm_2_5).state - 150.5) + 201.0);
+      } else if (id(pm_2_5).state <= 350.4) {
+      // hazardous
+      return((400.0 - 301.0) / (350.4 - 250.5) * (id(pm_2_5).state - 250.5) + 301.0);
+      } else if (id(pm_2_5).state <= 500.4) {
+      // hazardous 2
+      return((500.0 - 401.0) / (500.4 - 350.5) * (id(pm_2_5).state - 350.5) + 401.0);
+      } else {
+      return(500);
+      }
+
+  - platform: senseair
+    # SenseAir S8 https://esphome.io/components/sensor/senseair.html
+    # https://senseair.com/products/size-counts/s8-lp/
+    co2:
+      name: "CO2"
+      id: co2
+      filters:
+        - skip_initial: 2
+      on_value:
+        - if:
+            condition:
+              light.is_on: led_strip
+            then:
+              - if:
+                  condition:
+                    lambda: 'return id(co2).state < 800;'
+                  then:
+                    - light.turn_on:
+                        id: led_strip
+                        brightness: !lambda 'return id(led_brightness).state / 100.0;'
+                        red: 0%
+                        green: 100%
+                        blue: 0%
+              - if:
+                  condition:
+                    lambda: 'return id(co2).state >= 800 && id(co2).state < 1000;'
+                  then:
+                    - light.turn_on:
+                        id: led_strip
+                        brightness: !lambda 'return id(led_brightness).state / 100.0;'
+                        red: 100%
+                        green: 100%
+                        blue: 0%
+              - if:
+                  condition:
+                    lambda: 'return id(co2).state >= 1000 && id(co2).state < 1500;'
+                  then:
+                    - light.turn_on:
+                        id: led_strip
+                        brightness: !lambda 'return id(led_brightness).state / 100.0;'
+                        red: 100%
+                        green: 70%
+                        blue: 0%
+              - if:
+                  condition:
+                    lambda: 'return id(co2).state >= 1500 && id(co2).state < 2000;'
+                  then:
+                    - light.turn_on:
+                        id: led_strip
+                        brightness: !lambda 'return id(led_brightness).state / 100.0;'
+                        red: 100%
+                        green: 0%
+                        blue: 0%
+              - if:
+                  condition:
+                    lambda: 'return id(co2).state >= 2000 && id(co2).state < 3000;'
+                  then:
+                    - light.turn_on:
+                        id: led_strip
+                        brightness: !lambda 'return id(led_brightness).state / 100.0;'
+                        red: 60%
+                        green: 0%
+                        blue: 60%
+              - if:
+                  condition:
+                    lambda: 'return id(co2).state >= 3000 && id(co2).state < 10000;'
+                  then:
+                    - light.turn_on:
+                        id: led_strip
+                        brightness: !lambda 'return id(led_brightness).state / 100.0;'
+                        red: 40%
+                        green: 0%
+                        blue: 0%
+    id: senseair_s8
+    uart_id: senseair_s8_uart
+
+  - platform: sht4x
+    # SHT40 https://esphome.io/components/sensor/sht4x.html
+    temperature:
+      name: "Temperature"
+      id: temp
+    humidity:
+      name: "Humidity"
+      id: humidity
+    address: 0x44
+
+  # - platform: sht3xd
+  #   # SHT30 https://esphome.io/components/sensor/sht3xd.html
+  #   temperature:
+  #     name: "Temperature"
+  #     id: temp
+  #   humidity:
+  #     name: "Humidity"
+  #     id: humidity
+  #   address: 0x44
+  #   heater_enabled: false  # Only enable if in conditions that may have high condensation
+
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    id: wifi_dbm
+    update_interval: 60s
+
+  - platform: uptime
+    name: "Uptime"
+    id: device_uptime
+    update_interval: 10s
+
+  - platform: sgp4x
+    # SGP41 https://esphome.io/components/sensor/sgp4x.html
+    voc:
+      name: "VOC Index"
+      id: voc
+    nox:
+      name: "NOx Index"
+      id: nox
+    compensation:  # Remove this block if no temp/humidity sensor present for compensation
+      temperature_source: temp
+      humidity_source: humidity
+
+font:
+    # Font to use on the display
+  - file: "gfonts://Open Sans"
+    id: open_sans_9
+    size: 9
+    glyphs: '!"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/µ³'
+  - file: "gfonts://Open Sans"
+    id: open_sans_10
+    size: 10
+    glyphs: '!"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/µ³'
+  - file: "gfonts://Open Sans"
+    id: open_sans_14
+    size: 14
+    glyphs: '!"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/µ³'
+  - file: "gfonts://Open Sans"
+    id: open_sans_20
+    size: 20
+    glyphs: '!"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/µ³'
+
+
+display:
+    # https://esphome.io/components/display/ssd1306.html
+    # Formatting reference: https://www.tutorialspoint.com/c_standard_library/c_function_printf.htm
+  - platform: ssd1306_i2c
+    model: "SH1106 128x64"
+    id: oled_display
+    address: 0x3C
+    # rotation: 180°
+    pages:
+      - id: boot
+        lambda: |-
+          it.printf(0, 0, id(open_sans_14), "$upper_devicename");
+          it.printf(0, 21, id(open_sans_14), "ID:");
+          it.printf(128, 21, id(open_sans_14), TextAlign::TOP_RIGHT, "%s", get_mac_address().c_str());
+          it.printf(0, 42, id(open_sans_14), "Config Ver: $ag_esphome_config_version");
+      - id: combo
+        lambda: |-
+          if (id(display_in_f).state) {
+            it.printf(0, 0, id(open_sans_14), "%.1f°F", id(temp).state*9/5+32);
+          } else {
+            it.printf(0, 0, id(open_sans_14), "%.1f°C", id(temp).state);
+          }
+          it.printf(128, 0, id(open_sans_14), TextAlign::TOP_RIGHT, "%.1f%%", id(humidity).state);
+          it.line(0,17,128,17);
+          it.printf(0,19, id(open_sans_10), "CO2");
+          it.printf(0,27, id(open_sans_20), "%.0f", id(co2).state);
+          it.printf(0,51, id(open_sans_10), "ppm");
+          it.line(50,19,50,64);
+          it.printf(54, 19, id(open_sans_10), "PM2.5");
+          it.printf(54, 27, id(open_sans_20), "%.0f", id(pm_2_5_aqi).state);
+          it.printf(54, 51, id(open_sans_10), "AQI");
+          it.line(93,19,93,64);
+          it.printf(97,18, id(open_sans_10), "TVOC");
+          it.printf(97,29, id(open_sans_10), "%.0f", id(voc).state);
+          it.printf(97,41, id(open_sans_10), "NOx");
+          it.printf(97,51, id(open_sans_10), "%.0f", id(nox).state);
+
+      - id: blank
+        lambda: |-
+          it.printf(0, 0, 0, "");
+
+    on_page_change:
+      to: boot
+      then:
+        - if:
+            # Skip the boot page after initial boot
+            condition:
+                lambda: 'return id(device_uptime).state > 30;'
+            then:
+              - display.page.show_next: oled_display
+              - component.update: oled_display
+
+button:
+  # https://github.com/esphome/issues/issues/2444
+  - platform: template
+    name: SenseAir S8 Calibration
+    id: senseair_s8_calibrate_button
+    on_press:
+      then:
+        - senseair.background_calibration: senseair_s8
+        - delay: 70s
+        - senseair.background_calibration_result: senseair_s8
+  - platform: template
+    name: SenseAir S8 Enable Automatic Calibration
+    id: senseair_s8_enable_calibrate_button
+    on_press:
+      then:
+        - senseair.abc_enable: senseair_s8
+  - platform: template
+    name: SenseAir S8 Disable Automatic Calibration
+    id: senseair_s8_disable_calibrate_button
+    on_press:
+      then:
+        - senseair.abc_disable: senseair_s8
+  - platform: template
+    name: SenseAir S8 Show Calibration Interval
+    id: senseair_s8_show_calibrate_interval
+    on_press:
+      then:
+        - senseair.abc_get_period: senseair_s8
+
+
+light:
+    # https://esphome.io/components/light/esp32_rmt_led_strip.html
+  - platform: esp32_rmt_led_strip
+    rgb_order: GRB
+    pin: GPIO10  # Pin 16
+    num_leds: 11
+    rmt_channel: 0
+    chipset: ws2812
+    name: "LED Strip"
+    id: led_strip
+    restore_mode: RESTORE_DEFAULT_OFF
+
+number:
+    # https://esphome.io/components/number/template.html
+  - platform: template
+    name: "LED Brightness %"
+    icon: "mdi:lightbulb"
+    id: led_brightness
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 100
+    optimistic: true
+    restore_value: true
+    mode: slider
+
+output:
+    # Pin to notify external watchdog that activity is present
+  - platform: gpio
+    id: watchdog
+    pin: GPIO2
+
+interval:
+  - interval: 30s
+    # Notify watchdog device is still alive
+    then:
+      - output.turn_on: watchdog
+      - delay: 20ms
+      - output.turn_off: watchdog
+
+  - interval: 1s
+    # Automatically switch to the next page every five seconds
+    then:
+      - if:
+          # Show boot screen for first 10 seconds with serial number and config version
+          condition:
+              lambda: 'return id(device_uptime).state < 10;'
+          then:
+            - display.page.show: boot
+            - lambda: id(device_uptime).set_update_interval(1);
+          else:
+            if:
+              condition:
+                switch.is_on: disable_oled
+              then:
+                - display.page.show: blank
+                - component.update: oled_display
+              else:
+                # Change page on display
+                #- display.page.show_next: oled_display
+                - display.page.show: combo
+                - component.update: oled_display
