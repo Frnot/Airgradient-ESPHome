@@ -5,17 +5,23 @@
 
 substitutions:
   devicename: "airgradient-one"
-  upper_devicename: "AirGradient One"
-  ag_esphome_config_version: 0.2.1
+  upper_devicename: "AirGradient ONE"
+  ag_esphome_config_version: 0.9.7
 
 esphome:
   name: "${devicename}"
   friendly_name: "${upper_devicename}"
   name_add_mac_suffix: false  # Set to false if you don't want part of the MAC address in the name
 
-
 esp32:
   board: esp32-c3-devkitm-1
+
+# web_server:  # Please note that enabling this component will take up a lot of memory and may decrease stability, especially on ESP8266.
+# Creates a simple web server on the node that can be accessed through any browser
+# https://esphome.io/components/web_server.html
+web_server:
+  port: 80
+  include_internal: true
 
 # Disable logging
 # https://esphome.io/components/logger.html
@@ -41,13 +47,6 @@ wifi:
 # https://esphome.io/components/captive_portal.html
 captive_portal:
 
-# web_server:  # Please note that enabling this component will take up a lot of memory and may decrease stability, especially on ESP8266.
-# Creates a simple web server on the node that can be accessed through any browser
-# https://esphome.io/components/web_server.html
-web_server:
-  port: 80
-  include_internal: true
-
 http_request:
   # Used to support POST request to send data to AirGradient
   # https://esphome.io/components/http_request.html
@@ -59,6 +58,7 @@ switch:
   - platform: safe_mode
     name: "Flash Mode (Safe Mode)"
     icon: "mdi:cellphone-arrow-down"
+
   - platform: template
     name: "Display Temperature in °F"
     icon: "mdi:thermometer"
@@ -67,15 +67,22 @@ switch:
     optimistic: True
   
   - platform: template
-    name: "Disable OLED"
+    name: "Display PM2.5 in AQI"
+    icon: "mdi:air-filter"
+    id: display_in_aqi
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: True
+  
+  - platform: template
+    name: "OLED"
     icon: "mdi:television"
-    id: disable_oled
-    restore_mode: RESTORE_DEFAULT_OFF
+    id: oled
+    restore_mode: RESTORE_DEFAULT_ON
     optimistic: True
     turn_on_action:
-      - display.page.show: blank
-    turn_off_action:
       - display.page.show: combo
+    turn_off_action:
+      - display.page.show: blank
 
 uart:
   # https://esphome.io/components/uart.html#uart
@@ -279,17 +286,6 @@ sensor:
       id: humidity
     address: 0x44
 
-  # - platform: sht3xd
-  #   # SHT30 https://esphome.io/components/sensor/sht3xd.html
-  #   temperature:
-  #     name: "Temperature"
-  #     id: temp
-  #   humidity:
-  #     name: "Humidity"
-  #     id: humidity
-  #   address: 0x44
-  #   heater_enabled: false  # Only enable if in conditions that may have high condensation
-
   - platform: wifi_signal
     name: "WiFi Signal"
     id: wifi_dbm
@@ -298,7 +294,7 @@ sensor:
   - platform: uptime
     name: "Uptime"
     id: device_uptime
-    update_interval: 10s
+    update_interval: 1s
 
   - platform: sgp4x
     # SGP41 https://esphome.io/components/sensor/sgp4x.html
@@ -314,23 +310,13 @@ sensor:
 
 font:
     # Font to use on the display
-  - file: "gfonts://Open Sans"
-    id: open_sans_9
-    size: 9
+  - file: "fonts/t0-16-uni.bdf"
+    id: t0_16
+  - file: "fonts/t0-12-uni.bdf"
+    id: t0_12
     glyphs: '!"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/µ³'
-  - file: "gfonts://Open Sans"
-    id: open_sans_10
-    size: 10
-    glyphs: '!"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/µ³'
-  - file: "gfonts://Open Sans"
-    id: open_sans_14
-    size: 14
-    glyphs: '!"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/µ³'
-  - file: "gfonts://Open Sans"
-    id: open_sans_20
-    size: 20
-    glyphs: '!"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/µ³'
-
+  - file: "fonts/t0-22b-uni.bdf"
+    id: t0_22b
 
 display:
     # https://esphome.io/components/display/ssd1306.html
@@ -343,46 +329,68 @@ display:
     pages:
       - id: boot
         lambda: |-
-          it.printf(0, 0, id(open_sans_14), "$upper_devicename");
-          it.printf(0, 21, id(open_sans_14), "ID:");
-          it.printf(128, 21, id(open_sans_14), TextAlign::TOP_RIGHT, "%s", get_mac_address().c_str());
-          it.printf(0, 42, id(open_sans_14), "Config Ver: $ag_esphome_config_version");
+          it.printf(0, 0, id(t0_16), "$upper_devicename");
+          it.printf(0, 22, id(t0_16), "MAC:");
+          it.printf(128, 22, id(t0_16), TextAlign::TOP_RIGHT, "%s", get_mac_address().c_str());
+          it.printf(0, 45, id(t0_16), "Firmware v$ag_esphome_config_version");
       - id: combo
         lambda: |-
           if (id(display_in_f).state) {
-            it.printf(0, 0, id(open_sans_14), "%.1f°F", id(temp).state*9/5+32);
+            it.printf(0, 0, id(t0_16), "%.1f°F", id(temp).state*9/5+32);
           } else {
-            it.printf(0, 0, id(open_sans_14), "%.1f°C", id(temp).state);
+            it.printf(0, 0, id(t0_16), "%.1f°C", id(temp).state);
           }
-          it.printf(128, 0, id(open_sans_14), TextAlign::TOP_RIGHT, "%.1f%%", id(humidity).state);
-          it.line(0,17,128,17);
-          it.printf(0,19, id(open_sans_10), "CO2");
-          it.printf(0,27, id(open_sans_20), "%.0f", id(co2).state);
-          it.printf(0,51, id(open_sans_10), "ppm");
-          it.line(50,19,50,64);
-          it.printf(54, 19, id(open_sans_10), "PM2.5");
-          it.printf(54, 27, id(open_sans_20), "%.0f", id(pm_2_5_aqi).state);
-          it.printf(54, 51, id(open_sans_10), "AQI");
-          it.line(93,19,93,64);
-          it.printf(97,18, id(open_sans_10), "TVOC");
-          it.printf(97,29, id(open_sans_10), "%.0f", id(voc).state);
-          it.printf(97,41, id(open_sans_10), "NOx");
-          it.printf(97,51, id(open_sans_10), "%.0f", id(nox).state);
+          it.printf(128, 0, id(t0_16), TextAlign::TOP_RIGHT, "%.1f%%", id(humidity).state);
+
+          it.line(0, 14, 128, 14);
+
+          it.printf(0, 19, id(t0_12), "CO2");
+          if (id(co2).state > 0) {
+            it.printf(0, 30, id(t0_22b), "%.0f", id(co2).state);
+          } else {
+            it.printf(0, 30, id(t0_22b), "-");
+          }
+          it.printf(0, 53, id(t0_12), "ppm");
+
+          it.line(49, 16, 49, 64);
+
+          it.printf(52, 19, id(t0_12), "PM2.5");
+          if (id(display_in_aqi).state) {
+            if (id(pm_2_5_aqi).state >= 0) {
+              it.printf(52, 30, id(t0_22b), "%.0f", id(pm_2_5_aqi).state);
+            } else {
+              it.printf(52, 30, id(t0_22b), "-");
+            }
+            it.printf(52, 53, id(t0_12), "AQI");
+          } else {
+            if (id(pm_2_5).state >= 0) {
+              it.printf(52, 30, id(t0_22b), "%.0f", id(pm_2_5).state);
+            } else {
+              it.printf(52, 30, id(t0_22b), "-");
+            }
+            it.printf(52, 53, id(t0_12), "µg/m³");
+          }
+
+          it.line(89, 16, 89, 64);
+
+          it.printf(92, 19, id(t0_12), "TVOC:");
+          if (id(voc).state >= 0) {
+            it.printf(92, 31, id(t0_12), "%.0f", id(voc).state);
+          } else {
+            it.printf(92, 31, id(t0_12), "-");
+          }
+
+          it.printf(92, 43, id(t0_12), "NOx:");
+          if (id(nox).state >= 0) {
+            it.printf(92, 55, id(t0_12), "%.0f", id(nox).state);
+          } else {
+            it.printf(92, 55, id(t0_12), "-");
+          }
 
       - id: blank
         lambda: |-
-          it.printf(0, 0, 0, "");
-
-    on_page_change:
-      to: boot
-      then:
-        - if:
-            # Skip the boot page after initial boot
-            condition:
-                lambda: 'return id(device_uptime).state > 30;'
-            then:
-              - display.page.show_next: oled_display
-              - component.update: oled_display
+          it.printf(0, 0, id(t0_12), "");
+            
 
 button:
   # https://github.com/esphome/issues/issues/2444
@@ -454,8 +462,7 @@ interval:
       - delay: 20ms
       - output.turn_off: watchdog
 
-  - interval: 1s
-    # Automatically switch to the next page every five seconds
+  - interval: 5s
     then:
       - if:
           # Show boot screen for first 10 seconds with serial number and config version
@@ -463,16 +470,13 @@ interval:
               lambda: 'return id(device_uptime).state < 10;'
           then:
             - display.page.show: boot
-            - lambda: id(device_uptime).set_update_interval(1);
           else:
             if:
               condition:
-                switch.is_on: disable_oled
+                switch.is_on: oled
               then:
-                - display.page.show: blank
+                - display.page.show: combo
                 - component.update: oled_display
               else:
-                # Change page on display
-                #- display.page.show_next: oled_display
-                - display.page.show: combo
+                - display.page.show: blank
                 - component.update: oled_display

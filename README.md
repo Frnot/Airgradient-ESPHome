@@ -9,12 +9,12 @@ wifi_password: ""
 hidden_ssid:
 ```
 
+Fonts from:
+https://github.com/olikraus/u8g2/tree/master
+
 TODO:
 * list references (https://github.com/MallocArray/airgradient_esphome)
-* select better font
-* Make display match stock AG1 firmware
-* add switch for PM2.5 units
-* invert OLED display toggle
+* enable logging
 * disable webserver
 * re-add support for uploading to airgradient cloud without bricking on networks lacking internet access
 * re-evaluate AQI calculations
