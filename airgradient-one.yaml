@@ -6,12 +6,13 @@
 substitutions:
   devicename: "airgradient-one"
   upper_devicename: "AirGradient ONE"
-  ag_esphome_config_version: 0.9.7
+  ag_esphome_config_version: 0.9.8
 
 esphome:
   name: "${devicename}"
   friendly_name: "${upper_devicename}"
   name_add_mac_suffix: false  # Set to false if you don't want part of the MAC address in the name
+
 
 esp32:
   board: esp32-c3-devkitm-1
@@ -23,12 +24,11 @@ web_server:
   port: 80
   include_internal: true
 
-# Disable logging
-# https://esphome.io/components/logger.html
+# Serial logging must share UART with one of the sensors. 
+# Stock firmware has this feature, but it is broken (not supported?) in ESPHome.
+# Disable to avoid issues
 logger:
-  baud_rate: 0  # Must disable serial logging as ESP32-C3 only has 2 hardware UART and both are in use
-  logs:
-    component: ERROR  # Hiding warning messages about component taking a long time https://github.com/esphome/issues/issues/4717
+  baud_rate: 0
 
 # Enable Home Assistant API
 api:
@@ -83,6 +83,54 @@ switch:
       - display.page.show: combo
     turn_off_action:
       - display.page.show: blank
+
+  - platform: template
+    name: "SenseAir S8 Automatic Calibration"
+    icon: "mdi:tune"
+    id: s8_abc
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: True
+    turn_on_action:
+      - senseair.abc_enable: senseair_s8
+    turn_off_action:
+      - senseair.abc_disable: senseair_s8
+
+button:
+  # https://github.com/esphome/issues/issues/2444
+  - platform: template
+    name: Force SenseAir S8 Calibration
+    id: senseair_s8_calibrate_button
+    on_press:
+      then:
+        - senseair.background_calibration: senseair_s8
+        - delay: 70s
+        - senseair.background_calibration_result: senseair_s8
+
+light:
+    # https://esphome.io/components/light/esp32_rmt_led_strip.html
+  - platform: esp32_rmt_led_strip
+    rgb_order: GRB
+    pin: GPIO10  # Pin 16
+    num_leds: 11
+    rmt_channel: 0
+    chipset: ws2812
+    name: "LED Strip"
+    id: led_strip
+    restore_mode: RESTORE_DEFAULT_OFF
+
+number:
+    # https://esphome.io/components/number/template.html
+  - platform: template
+    name: "LED Brightness %"
+    icon: "mdi:lightbulb"
+    id: led_brightness
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 100
+    optimistic: true
+    restore_value: true
+    mode: slider
 
 uart:
   # https://esphome.io/components/uart.html#uart
@@ -310,11 +358,11 @@ sensor:
 
 font:
     # Font to use on the display
-  - file: "fonts/t0-16-uni.bdf"
-    id: t0_16
   - file: "fonts/t0-12-uni.bdf"
     id: t0_12
     glyphs: '!"%()+=,-_.:°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz/µ³'
+  - file: "fonts/t0-16-uni.bdf"
+    id: t0_16
   - file: "fonts/t0-22b-uni.bdf"
     id: t0_22b
 
@@ -390,63 +438,6 @@ display:
       - id: blank
         lambda: |-
           it.printf(0, 0, id(t0_12), "");
-            
-
-button:
-  # https://github.com/esphome/issues/issues/2444
-  - platform: template
-    name: SenseAir S8 Calibration
-    id: senseair_s8_calibrate_button
-    on_press:
-      then:
-        - senseair.background_calibration: senseair_s8
-        - delay: 70s
-        - senseair.background_calibration_result: senseair_s8
-  - platform: template
-    name: SenseAir S8 Enable Automatic Calibration
-    id: senseair_s8_enable_calibrate_button
-    on_press:
-      then:
-        - senseair.abc_enable: senseair_s8
-  - platform: template
-    name: SenseAir S8 Disable Automatic Calibration
-    id: senseair_s8_disable_calibrate_button
-    on_press:
-      then:
-        - senseair.abc_disable: senseair_s8
-  - platform: template
-    name: SenseAir S8 Show Calibration Interval
-    id: senseair_s8_show_calibrate_interval
-    on_press:
-      then:
-        - senseair.abc_get_period: senseair_s8
-
-
-light:
-    # https://esphome.io/components/light/esp32_rmt_led_strip.html
-  - platform: esp32_rmt_led_strip
-    rgb_order: GRB
-    pin: GPIO10  # Pin 16
-    num_leds: 11
-    rmt_channel: 0
-    chipset: ws2812
-    name: "LED Strip"
-    id: led_strip
-    restore_mode: RESTORE_DEFAULT_OFF
-
-number:
-    # https://esphome.io/components/number/template.html
-  - platform: template
-    name: "LED Brightness %"
-    icon: "mdi:lightbulb"
-    id: led_brightness
-    min_value: 0
-    max_value: 100
-    step: 1
-    initial_value: 100
-    optimistic: true
-    restore_value: true
-    mode: slider
 
 output:
     # Pin to notify external watchdog that activity is present

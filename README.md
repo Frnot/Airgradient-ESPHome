@@ -18,8 +18,6 @@ hidden_ssid:
 
 
 TODO:
-* enable logging
-* disable webserver
 * re-add support for uploading to airgradient cloud without bricking on networks lacking internet access
 * re-evaluate AQI calculations
 * consider disabling PMS5003 intermittently to extend life of the unit (but probably shorten the fan's)
